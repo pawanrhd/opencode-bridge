@@ -176,7 +176,9 @@ async function cleanupOldSessions() {
  *
  * Handles:
  * - text content (string or array)
- * - system prompts (passed as proper system part)
+ * - system prompts (folded into a labeled "text" part — OpenCode's session
+ *   API only accepts part types "text" | "file" | "agent" | "subtask", so a
+ *   literal type:"system" part is rejected with a 400 BadRequest)
  * - image_url (base64 data URI or remote URL)
  * - tool calls and tool results
  * - silently skips unsupported types (audio, file)
@@ -185,13 +187,16 @@ function buildParts(messages, tools) {
   const parts  = []
   let   hasImg = false
 
-  // Extract system message first — pass as dedicated system part
+  // Extract system message first — fold into a labeled "text" part.
+  // NOTE: OpenCode's /session/{id}/message endpoint validates each part
+  // against a union of type:"text" | "file" | "agent" | "subtask". There is
+  // no type:"system" part, so it must never be sent as such.
   const systemMsg = messages.find(m => m.role === "system")
   if (systemMsg) {
     const text = typeof systemMsg.content === "string"
       ? systemMsg.content
       : systemMsg.content?.map(c => c.text ?? "").join("\n") ?? ""
-    parts.push({ type: "system", text })
+    parts.push({ type: "text", text: `[SYSTEM]\n${text}` })
   }
 
   // Non-system messages
@@ -260,17 +265,12 @@ function buildParts(messages, tools) {
     }
   }
 
-  // Append tool definitions if provided
-  if (tools?.length) {
-    parts.push({
-      type:  "tools",
-      tools: tools.map(t => ({
-        name:        t.function?.name        ?? t.name,
-        description: t.function?.description ?? t.description ?? "",
-        parameters:  t.function?.parameters  ?? t.parameters  ?? {},
-      })),
-    })
-  }
+  // NOTE: OpenCode's /session/{id}/message endpoint only accepts parts of
+  // type "text" | "file" | "agent" | "subtask" — there is no "tools" part
+  // type, so client-supplied tool schemas (e.g. VS Code's ~50 built-in
+  // Copilot tools) cannot be forwarded this way. OpenCode has its own
+  // built-in tools (bash, file edit, etc.) and doesn't need the client's
+  // tool list, so we intentionally drop it rather than send an invalid part.
 
   return { parts, hasImg }
 }
@@ -297,9 +297,9 @@ app.use(express.json({ limit: "50mb" }))     // large enough for image payloads
 app.get("/health", async (req, res) => {
   try {
     const data = await ocGet("/global/health", 10000)
-    res.json({ status: "ok", bridge_version: "1.2.0", opencode: { connected: true, ...data }, provider: PROVIDER_ID, active_sessions: sessionMap.size })
+    res.json({ status: "ok", bridge_version: "1.2.3", opencode: { connected: true, ...data }, provider: PROVIDER_ID, active_sessions: sessionMap.size })
   } catch (err) {
-    res.json({ status: "ok", bridge_version: "1.2.0", opencode: { connected: false, error: err.message }, provider: PROVIDER_ID, active_sessions: sessionMap.size })
+    res.json({ status: "ok", bridge_version: "1.2.3", opencode: { connected: false, error: err.message }, provider: PROVIDER_ID, active_sessions: sessionMap.size })
   }
 })
 
@@ -432,6 +432,16 @@ app.post("/v1/chat/completions", authMiddleware, async (req, res) => {
       .filter(Boolean)
     const responseText  = textSegments.join("\n\n")
 
+    // Collect reasoning/thinking segments — OpenCode emits a separate
+    // "reasoning" part type for models with extended thinking (DeepSeek-R1
+    // style, Claude extended thinking, etc). These were previously dropped
+    // entirely since only "text" parts were extracted.
+    const reasoningSegments = resParts
+      .filter(p => p.type === "reasoning" && p.text)
+      .map(p => p.text.trim())
+      .filter(Boolean)
+    const reasoningText = reasoningSegments.join("\n\n")
+
     // Collect OpenCode's own tool results (bash output, file reads, etc.)
     // and append as a structured block so the agent can see what happened
     const ocToolResults = resParts.filter(p => p.type === "tool-result")
@@ -459,7 +469,7 @@ app.post("/v1/chat/completions", authMiddleware, async (req, res) => {
     }
 
     const finishReason = toolCalls?.length ? "tool_calls" : "stop"
-    logger.info(`[${reqId}] ✓ ${Date.now() - startMs}ms tokens=${usage.total_tokens} chars=${fullResponseText.length} steps=${textSegments.length} finish=${finishReason}`)
+    logger.info(`[${reqId}] ✓ ${Date.now() - startMs}ms tokens=${usage.total_tokens} chars=${fullResponseText.length} reasoning_chars=${reasoningText.length} steps=${textSegments.length} finish=${finishReason}`)
 
     const cmplId  = `chatcmpl-${sessionId}`
     const created = Math.floor(Date.now() / 1000)
@@ -467,6 +477,7 @@ app.post("/v1/chat/completions", authMiddleware, async (req, res) => {
     const message = {
       role:    "assistant",
       content: toolCalls ? (fullResponseText || null) : (fullResponseText ?? ""),
+      ...(reasoningText ? { reasoning_content: reasoningText } : {}),
       ...(toolCalls ? { tool_calls: toolCalls } : {}),
     }
 
@@ -476,6 +487,13 @@ app.post("/v1/chat/completions", authMiddleware, async (req, res) => {
         id: cmplId, object: "chat.completion.chunk", created, model: modelID,
         choices: [{ index: 0, delta: { role: "assistant", content: "" }, finish_reason: null }],
       })}\n\n`)
+
+      if (reasoningText) {
+        res.write(`data: ${JSON.stringify({
+          id: cmplId, object: "chat.completion.chunk", created, model: modelID,
+          choices: [{ index: 0, delta: { reasoning_content: reasoningText }, finish_reason: null }],
+        })}\n\n`)
+      }
 
       if (toolCalls) {
         for (const [i, tc] of toolCalls.entries()) {
@@ -540,7 +558,7 @@ app.use((req, res) => {
 // ─── Start ───────────────────────────────────────────────────────────────────
 
 const server = app.listen(PORT, "0.0.0.0", async () => {
-  logger.info(`opencode-bridge v1.2.0 started`)
+  logger.info(`opencode-bridge v1.2.3 started`)
   logger.info(`  Listening  : http://0.0.0.0:${PORT}`)
   logger.info(`  OpenCode   : ${OPENCODE_URL}`)
   logger.info(`  Provider   : ${PROVIDER_ID}`)
