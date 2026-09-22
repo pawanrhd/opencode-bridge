@@ -8,26 +8,26 @@
  */
 
 import express from "express"
-import fs      from "fs"
+import fs from "fs"
 import nodePath from "path"
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
-const PORT          = parseInt(process.env.PORT                 || "5000",    10)
-const OPENCODE_URL  = (process.env.OPENCODE_URL                 || "http://localhost:4096").replace(/\/$/, "")
-const OPENCODE_PASS = process.env.OPENCODE_SERVER_PASSWORD      || ""
-const OPENCODE_USER = process.env.OPENCODE_SERVER_USERNAME      || "opencode"
-const PROVIDER_ID   = process.env.OPENCODE_PROVIDER_ID          || "github-copilot"
-const DEFAULT_MODEL = process.env.DEFAULT_MODEL                 || "gpt-4o"
-const BRIDGE_KEY    = process.env.OPENCODE_PROXY_API_KEY        || ""
-const LOG_LEVEL     = process.env.LOG_LEVEL                     || "info"
-const LOG_FILE      = process.env.LOG_FILE                      || ""           // e.g. /data/logs/bridge.log
-const TIMEOUT_MS    = parseInt(process.env.TIMEOUT_MS           || "600000",   10)
-const HEARTBEAT_MS  = parseInt(process.env.HEARTBEAT_MS         || "15000",    10)
-const RETRY_COUNT   = parseInt(process.env.RETRY_COUNT          || "2",        10)
-const RETRY_DELAY   = parseInt(process.env.RETRY_DELAY_MS       || "2000",     10)
-const SESSION_TTL_H = parseInt(process.env.SESSION_TTL_HOURS    || "2",        10)
-const CLEANUP_EVERY = parseInt(process.env.CLEANUP_INTERVAL_MS  || "3600000",  10) // 1hr
+const PORT = parseInt(process.env.PORT || "5000", 10)
+const OPENCODE_URL = (process.env.OPENCODE_URL || "http://localhost:4096").replace(/\/$/, "")
+const OPENCODE_PASS = process.env.OPENCODE_SERVER_PASSWORD || ""
+const OPENCODE_USER = process.env.OPENCODE_SERVER_USERNAME || "opencode"
+const PROVIDER_ID = process.env.OPENCODE_PROVIDER_ID || "github-copilot"
+const DEFAULT_MODEL = process.env.DEFAULT_MODEL || "gpt-4o"
+const BRIDGE_KEY = process.env.OPENCODE_PROXY_API_KEY || ""
+const LOG_LEVEL = process.env.LOG_LEVEL || "info"
+const LOG_FILE = process.env.LOG_FILE || ""           // e.g. /data/logs/bridge.log
+const TIMEOUT_MS = parseInt(process.env.TIMEOUT_MS || "600000", 10)
+const HEARTBEAT_MS = parseInt(process.env.HEARTBEAT_MS || "15000", 10)
+const RETRY_COUNT = parseInt(process.env.RETRY_COUNT || "2", 10)
+const RETRY_DELAY = parseInt(process.env.RETRY_DELAY_MS || "2000", 10)
+const SESSION_TTL_H = parseInt(process.env.SESSION_TTL_HOURS || "2", 10)
+const CLEANUP_EVERY = parseInt(process.env.CLEANUP_INTERVAL_MS || "3600000", 10) // 1hr
 
 // ─── Session map (conversation → OpenCode session) ──────────────────────────
 // Keyed by x-conversation-id header or a hash of the first user message.
@@ -60,8 +60,8 @@ function writeLog(line) {
 }
 
 const logger = {
-  info:  (...a) => LOG_LEVEL !== "silent" && writeLog(`[${ts()}] INFO  ${a.join(" ")}`),
-  debug: (...a) => LOG_LEVEL === "debug"  && writeLog(`[${ts()}] DEBUG ${a.join(" ")}`),
+  info: (...a) => LOG_LEVEL !== "silent" && writeLog(`[${ts()}] INFO  ${a.join(" ")}`),
+  debug: (...a) => LOG_LEVEL === "debug" && writeLog(`[${ts()}] DEBUG ${a.join(" ")}`),
   error: (...a) => LOG_LEVEL !== "silent" && writeLog(`[${ts()}] ERROR ${a.join(" ")}`),
 }
 
@@ -92,14 +92,14 @@ async function ocGet(path, timeoutMs = TIMEOUT_MS) {
 async function ocPost(path, body) {
   const { signal, clear } = withTimeout(TIMEOUT_MS)
   const res = await fetch(`${OPENCODE_URL}${path}`, {
-    method:  "POST",
+    method: "POST",
     headers: baseHeaders(),
-    body:    JSON.stringify(body),
+    body: JSON.stringify(body),
     signal,
   }).finally(clear)
   const text = await res.text()
   if (!res.ok) throw new Error(`OpenCode POST ${path} → ${res.status}: ${text.slice(0, 300)}`)
-  if (!text)   throw new Error(`OpenCode POST ${path} → empty response`)
+  if (!text) throw new Error(`OpenCode POST ${path} → empty response`)
   try { return JSON.parse(text) }
   catch { throw new Error(`OpenCode POST ${path} → invalid JSON: ${text.slice(0, 300)}`) }
 }
@@ -107,7 +107,7 @@ async function ocPost(path, body) {
 async function ocDelete(path) {
   const { signal, clear } = withTimeout(10000)
   const res = await fetch(`${OPENCODE_URL}${path}`, {
-    method:  "DELETE",
+    method: "DELETE",
     headers: baseHeaders(),
     signal,
   }).finally(clear)
@@ -134,8 +134,8 @@ async function withRetry(fn, retries = RETRY_COUNT, delayMs = RETRY_DELAY) {
     } catch (err) {
       lastErr = err
       // Don't retry aborts (timeout) or 4xx errors
-      if (err.name === "AbortError")              throw err
-      if (err.message.match(/→ 4\d\d/))          throw err
+      if (err.name === "AbortError") throw err
+      if (err.message.match(/→ 4\d\d/)) throw err
       if (i < retries) {
         logger.error(`Attempt ${i + 1} failed: ${err.message} — retrying in ${delayMs}ms`)
         await new Promise(r => setTimeout(r, delayMs))
@@ -149,10 +149,10 @@ async function withRetry(fn, retries = RETRY_COUNT, delayMs = RETRY_DELAY) {
 
 async function cleanupOldSessions() {
   try {
-    const data     = await ocGetList("/session")
+    const data = await ocGetList("/session")
     const sessions = Array.isArray(data) ? data : (data.sessions ?? data.data ?? [])
-    const cutoff   = Date.now() - SESSION_TTL_H * 60 * 60 * 1000
-    let   deleted  = 0
+    const cutoff = Date.now() - SESSION_TTL_H * 60 * 60 * 1000
+    let deleted = 0
 
     for (const s of sessions) {
       const created = s.time?.created ?? s.created ?? 0
@@ -184,8 +184,8 @@ async function cleanupOldSessions() {
  * - silently skips unsupported types (audio, file)
  */
 function buildParts(messages, tools) {
-  const parts  = []
-  let   hasImg = false
+  const parts = []
+  let hasImg = false
 
   // Extract system message first — fold into a labeled "text" part.
   // NOTE: OpenCode's /session/{id}/message endpoint validates each part
@@ -213,9 +213,9 @@ function buildParts(messages, tools) {
       }
       for (const tc of m.tool_calls) {
         parts.push({
-          type:       "tool-call",
-          toolName:   tc.function?.name ?? tc.name,
-          toolArgs:   (() => { try { return JSON.parse(tc.function?.arguments ?? "{}") } catch { return {} } })(),
+          type: "tool-call",
+          toolName: tc.function?.name ?? tc.name,
+          toolArgs: (() => { try { return JSON.parse(tc.function?.arguments ?? "{}") } catch { return {} } })(),
           toolCallId: tc.id,
         })
       }
@@ -225,9 +225,9 @@ function buildParts(messages, tools) {
     // Tool result messages
     if (m.role === "tool") {
       parts.push({
-        type:       "tool-result",
+        type: "tool-result",
         toolCallId: m.tool_call_id,
-        result:     m.content ?? "",
+        result: m.content ?? "",
       })
       continue
     }
@@ -247,14 +247,14 @@ function buildParts(messages, tools) {
           parts.push({ type: "text", text: c.text ?? "" })
 
         } else if (c.type === "image_url") {
-          hasImg      = true
-          const url   = c.image_url?.url ?? ""
+          hasImg = true
+          const url = c.image_url?.url ?? ""
 
           if (url.startsWith("data:")) {
             const commaIdx = url.indexOf(",")
             const meta = url.slice(0, commaIdx)
             const data = url.slice(commaIdx + 1)
-            const mediaType    = meta.replace("data:", "").replace(";base64", "")
+            const mediaType = meta.replace("data:", "").replace(";base64", "")
             parts.push({ type: "image", source: { type: "base64", mediaType, data } })
           } else {
             parts.push({ type: "image", source: { type: "url", url } })
@@ -280,7 +280,7 @@ function buildParts(messages, tools) {
 function authMiddleware(req, res, next) {
   if (!BRIDGE_KEY) return next()
   const header = req.headers["authorization"] ?? ""
-  const token  = header.startsWith("Bearer ") ? header.slice(7) : header
+  const token = header.startsWith("Bearer ") ? header.slice(7) : header
   if (token !== BRIDGE_KEY) {
     return res.status(401).json({ error: { message: "Unauthorized", type: "auth_error" } })
   }
@@ -307,9 +307,9 @@ app.get("/health", async (req, res) => {
 
 app.get("/v1/models", authMiddleware, async (req, res) => {
   try {
-    const data      = await ocGet("/provider")
+    const data = await ocGet("/provider")
     const connected = data.connected ?? []
-    const models    = []
+    const models = []
 
     for (const provider of data.all ?? []) {
       if (!connected.includes(provider.id)) continue
@@ -347,12 +347,12 @@ app.post("/v1/chat/completions", authMiddleware, async (req, res) => {
 
   // Model can be bare "gpt-4o" or provider-prefixed "github-copilot/gpt-4o"
   let providerID = PROVIDER_ID
-  let modelID    = model || DEFAULT_MODEL
+  let modelID = model || DEFAULT_MODEL
 
   if (modelID.includes("/")) {
     const [p, ...m] = modelID.split("/")
     providerID = p
-    modelID    = m.join("/")
+    modelID = m.join("/")
   }
 
   logger.info(`[${reqId}] → provider=${providerID} model=${modelID} messages=${messages.length} stream=${!!stream} tools=${tools?.length ?? 0}`)
@@ -365,12 +365,12 @@ app.post("/v1/chat/completions", authMiddleware, async (req, res) => {
   const convId = req.headers["x-conversation-id"]
     ?? req.headers["x-session-id"]
     ?? (() => {
-         const first = messages.find(m => m.role === "user")
-         const text  = typeof first?.content === "string" ? first.content : JSON.stringify(first?.content)
-         let h = 0
-         for (const c of (text ?? "")) { h = (Math.imul(31, h) + c.charCodeAt(0)) | 0 }
-         return `hash_${Math.abs(h)}`
-       })()
+      const first = messages.find(m => m.role === "user")
+      const text = typeof first?.content === "string" ? first.content : JSON.stringify(first?.content)
+      let h = 0
+      for (const c of (text ?? "")) { h = (Math.imul(31, h) + c.charCodeAt(0)) | 0 }
+      return `hash_${Math.abs(h)}`
+    })()
 
   try {
     // 1. Get or create OpenCode session for this conversation
@@ -423,14 +423,14 @@ app.post("/v1/chat/completions", authMiddleware, async (req, res) => {
 
     // 5. Extract response — join ALL text parts in order (OpenCode may produce
     //    multiple text parts across tool-use steps)
-    const resParts  = result.parts ?? []
+    const resParts = result.parts ?? []
 
     // Collect text segments in document order, skipping step markers
-    const textSegments  = resParts
+    const textSegments = resParts
       .filter(p => p.type === "text" && p.text)
       .map(p => p.text.trim())
       .filter(Boolean)
-    const responseText  = textSegments.join("\n\n")
+    const responseText = textSegments.join("\n\n")
 
     // Collect reasoning/thinking segments — OpenCode emits a separate
     // "reasoning" part type for models with extended thinking (DeepSeek-R1
@@ -447,36 +447,36 @@ app.post("/v1/chat/completions", authMiddleware, async (req, res) => {
     const ocToolResults = resParts.filter(p => p.type === "tool-result")
     const toolResultBlock = ocToolResults.length
       ? "\n\n---\n**Tool outputs:**\n" + ocToolResults
-          .map(r => `**${r.toolName ?? "tool"}:** ${typeof r.result === "string" ? r.result : JSON.stringify(r.result)}`)
-          .join("\n")
+        .map(r => `**${r.toolName ?? "tool"}:** ${typeof r.result === "string" ? r.result : JSON.stringify(r.result)}`)
+        .join("\n")
       : ""
     const fullResponseText = responseText + toolResultBlock
 
     // Extract OpenAI-style tool calls from OpenCode response (if model called client tools)
     const toolCallParts = resParts.filter(p => p.type === "tool-call")
-    const toolCalls     = toolCallParts.length
+    const toolCalls = toolCallParts.length
       ? toolCallParts.map((tc, i) => ({
-          id:       tc.toolCallId ?? `call_${i}`,
-          type:     "function",
-          function: { name: tc.toolName, arguments: JSON.stringify(tc.toolArgs ?? {}) },
-        }))
+        id: tc.toolCallId ?? `call_${i}`,
+        type: "function",
+        function: { name: tc.toolName, arguments: JSON.stringify(tc.toolArgs ?? {}) },
+      }))
       : undefined
 
     const usage = {
-      prompt_tokens:     result.info?.tokens?.input  ?? 0,
+      prompt_tokens: result.info?.tokens?.input ?? 0,
       completion_tokens: result.info?.tokens?.output ?? 0,
-      total_tokens:      result.info?.tokens?.total  ?? 0,
+      total_tokens: result.info?.tokens?.total ?? 0,
     }
 
     const finishReason = toolCalls?.length ? "tool_calls" : "stop"
     logger.info(`[${reqId}] ✓ ${Date.now() - startMs}ms tokens=${usage.total_tokens} chars=${fullResponseText.length} reasoning_chars=${reasoningText.length} steps=${textSegments.length} finish=${finishReason}`)
 
-    const cmplId  = `chatcmpl-${sessionId}`
+    const cmplId = `chatcmpl-${sessionId}`
     const created = Math.floor(Date.now() / 1000)
 
     const message = {
-      role:    "assistant",
-      content: toolCalls ? (fullResponseText || null) : (fullResponseText ?? ""),
+      role: "assistant",
+      content: toolCalls ? (fullResponseText || null) : (fullResponseText || reasoningText || ""),
       ...(reasoningText ? { reasoning_content: reasoningText } : {}),
       ...(toolCalls ? { tool_calls: toolCalls } : {}),
     }
@@ -505,7 +505,7 @@ app.post("/v1/chat/completions", authMiddleware, async (req, res) => {
       } else {
         res.write(`data: ${JSON.stringify({
           id: cmplId, object: "chat.completion.chunk", created, model: modelID,
-          choices: [{ index: 0, delta: { content: fullResponseText }, finish_reason: null }],
+          choices: [{ index: 0, delta: { content: fullResponseText || reasoningText }, finish_reason: null }],
         })}\n\n`)
       }
 
@@ -562,7 +562,7 @@ const server = app.listen(PORT, "0.0.0.0", async () => {
   logger.info(`  Listening  : http://0.0.0.0:${PORT}`)
   logger.info(`  OpenCode   : ${OPENCODE_URL}`)
   logger.info(`  Provider   : ${PROVIDER_ID}`)
-  logger.info(`  Auth       : ${BRIDGE_KEY    ? "enabled" : "disabled"}`)
+  logger.info(`  Auth       : ${BRIDGE_KEY ? "enabled" : "disabled"}`)
   logger.info(`  OC Auth    : ${OPENCODE_PASS ? `enabled (user=${OPENCODE_USER})` : "disabled"}`)
   logger.info(`  Timeout    : ${TIMEOUT_MS}ms`)
   logger.info(`  Heartbeat  : ${HEARTBEAT_MS}ms`)
@@ -594,4 +594,4 @@ const shutdown = (signal) => {
 }
 
 process.on("SIGTERM", () => shutdown("SIGTERM"))
-process.on("SIGINT",  () => shutdown("SIGINT"))
+process.on("SIGINT", () => shutdown("SIGINT"))
